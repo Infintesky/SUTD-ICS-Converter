@@ -21,15 +21,20 @@ def decode_html(text):
 
 
 def extract_course_names(html):
-    """Extract course names, handling embedded entity spans."""
-    pattern = (
+    """Extract course names from either legacy encoded or clean HTML format."""
+    courses = []
+
+    # Clean format: <td class="PAGROUPDIVIDER" ...>Course Name</td>
+    clean_pattern = r'<td[^>]+class="PAGROUPDIVIDER"[^>]*>([^<]+)</td>'
+    matches = re.findall(clean_pattern, html)
+    if matches:
+        return [decode_html(m.strip()) for m in matches if m.strip()]
+
+    # Legacy format with encoded entities
+    legacy_pattern = (
         r"PAGROUPDIVIDER.*?&gt;</span><span>(.*?)</span><span>&lt;/<span"
     )
-    matches = re.findall(pattern, html, re.DOTALL)
-
-    courses = []
-    for m in matches:
-        # Remove any nested span tags (used for entities like &amp;)
+    for m in re.findall(legacy_pattern, html, re.DOTALL):
         clean = re.sub(r'<span[^>]*>.*?</span>', '', m)
         clean = decode_html(clean)
         clean = re.sub(r'<[^>]+>', '', clean)
@@ -40,18 +45,36 @@ def extract_course_names(html):
 
 def get_span_values(html, id_prefix):
     """Extract meeting data using indexed ID patterns."""
-    pattern = rf"{id_prefix}\$(\d+)</a>\\?' &gt;</span><span>([^<]+)</span>"
-    matches = re.findall(pattern, html)
+    # Clean format: <span id="MTG_SCHED$0">value</span>
+    clean_pattern = rf'id="{id_prefix}\$(\d+)">([^<]*)</span>'
+    matches = re.findall(clean_pattern, html)
+    if matches:
+        return {int(idx): decode_html(val) for idx, val in matches if val.strip()}
+
+    # Legacy format with encoded entities
+    legacy_pattern = rf"{id_prefix}\$(\d+)</a>\\?' &gt;</span><span>([^<]+)</span>"
+    matches = re.findall(legacy_pattern, html)
     return {int(idx): decode_html(val) for idx, val in matches if val.strip()}
 
 
 def get_course_positions(html):
     """Find course positions in HTML to associate meetings with courses."""
-    pattern = (
+    positions = []
+
+    # Clean format
+    clean_pattern = r'<td[^>]+class="PAGROUPDIVIDER"[^>]*>([^<]+)</td>'
+    if re.search(clean_pattern, html):
+        for match in re.finditer(clean_pattern, html):
+            name = decode_html(match.group(1).strip())
+            if name:
+                positions.append((match.start(), name))
+        return positions
+
+    # Legacy format
+    legacy_pattern = (
         r"PAGROUPDIVIDER.*?&gt;</span><span>(.*?)</span><span>&lt;/<span"
     )
-    positions = []
-    for match in re.finditer(pattern, html, re.DOTALL):
+    for match in re.finditer(legacy_pattern, html, re.DOTALL):
         course_text = match.group(1)
         clean = re.sub(r'<span[^>]*>.*?</span>', '', course_text)
         clean = decode_html(clean)
@@ -63,9 +86,21 @@ def get_course_positions(html):
 
 def get_meeting_positions(html):
     """Find meeting positions in HTML."""
-    pattern = r"MTG_SCHED\$(\d+)</a>\\?' &gt;</span><span>([^<]+)</span>"
     positions = []
-    for match in re.finditer(pattern, html):
+
+    # Clean format
+    clean_pattern = r'id="MTG_SCHED\$(\d+)">([^<]+)</span>'
+    if re.search(clean_pattern, html):
+        for match in re.finditer(clean_pattern, html):
+            idx = int(match.group(1))
+            val = decode_html(match.group(2))
+            if val.strip():
+                positions.append((match.start(), idx, val))
+        return positions
+
+    # Legacy format
+    legacy_pattern = r"MTG_SCHED\$(\d+)</a>\\?' &gt;</span><span>([^<]+)</span>"
+    for match in re.finditer(legacy_pattern, html):
         idx = int(match.group(1))
         val = decode_html(match.group(2))
         if val.strip():
